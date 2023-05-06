@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package csvprocessor.v1;
+
+option go_package = "csvtodb/pkg/pb/csvprocessor/v1;csvprocessor";
+
+
+service CSVReader {
+  rpc ReadHeader (HeaderRequest) returns (HeaderResponse) {}
+  rpc ReadRecord (RecordRequest) returns (RecordResponse) {}
+}
+
+service JSONConverter {
+  rpc ConvertRecord (ConvertRequest) returns (ConvertResponse) {}
+}
+
+service RabbitMQPublisher {
+  rpc PublishMessage (PublishRequest) returns (PublishResponse) {}
+}
+
+message HeaderRequest {
+  string header_file = 1;
+}
+
+message HeaderResponse {
+  repeated string header = 1;
+}
+
+message RecordRequest {
+  string file_path = 1;
+}
+
+message RecordResponse {
+  repeated string record = 1;
+}
+
+message ConvertRequest {
+  repeated string header = 1;
+  repeated string record = 2;
+}
+
+message ConvertResponse {
+  string json_record = 1;
+}
+
+message PublishRequest {
+  string queue_name = 1;
+  string json_record = 2;
+}
+
+message PublishResponse {
+  bool success = 1;
+}

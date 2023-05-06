@@ -1,0 +1,69 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+)
+
+func main() {
+	inputFile := "xvideos.com-export-full.csv"
+	linesPerFile := 50000 // Defina o número de linhas por arquivo
+
+	file, err := os.Open(inputFile)
+	if err != nil {
+		fmt.Println("Erro ao abrir o arquivo:", err)
+		return
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	var line string
+	fileCount := 1
+	lineCount := 0
+	var outFile *os.File
+	var outWriter *bufio.Writer
+
+	for {
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Println("Erro ao ler a linha:", err)
+			return
+		}
+
+		if lineCount == 0 {
+			outFile, err = os.Create(fmt.Sprintf("part_%s.csv", strconv.Itoa(fileCount)))
+			if err != nil {
+				fmt.Println("Erro ao criar arquivo de saída:", err)
+				return
+			}
+			outWriter = bufio.NewWriter(outFile)
+		}
+
+		_, err = outWriter.WriteString(line)
+		if err != nil {
+			fmt.Println("Erro ao escrever a linha no arquivo de saída:", err)
+			return
+		}
+
+		lineCount++
+		if lineCount == linesPerFile {
+			outWriter.Flush()
+			outFile.Close()
+			fileCount++
+			lineCount = 0
+		}
+	}
+
+	if lineCount > 0 {
+		outWriter.Flush()
+		outFile.Close()
+	}
+
+	fmt.Println("Arquivo CSV dividido com sucesso!")
+}

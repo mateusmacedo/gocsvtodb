@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csv-reader
+spec:
+  template:
+    spec:
+      containers:
+        - name: csv-reader
+          image: myregistry/csv-reader:latest
+          env:
+            - name: RABBITMQ_URL
+              value: "amqp://guest:guest@rabbitmq:5672/"

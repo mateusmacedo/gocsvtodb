@@ -1,0 +1,180 @@
+package main
+
+import (
+	"bufio"
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/streadway/amqp"
+)
+
+type CSVProcessor struct {
+	header   []string
+	queueMap map[string]*amqp.Channel
+}
+
+func main() {
+	// 1. Ler a primeira linha do CSV como atributos JSON
+	header, err := readHeader("header.csv")
+	if err != nil {
+		fmt.Println("Erro ao ler o cabeçalho:", err)
+		return
+	}
+
+	processor := CSVProcessor{
+		header:   header,
+		queueMap: make(map[string]*amqp.Channel),
+	}
+
+	// 2. Perguntar ao usuário o caminho relativo do diretório
+	var dirPath string
+	fmt.Print("Informe o caminho relativo do diretório com os arquivos CSV: ")
+	fmt.Scanln(&dirPath)
+
+	// 3. Ler os arquivos CSV no diretório fornecido
+	files, err := ioutil.ReadDir(dirPath)
+	if err != nil {
+		fmt.Printf("Erro ao ler o diretório de arquivos: %v\n", err)
+		return
+	}
+
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".csv") {
+			filePath := filepath.Join(dirPath, f.Name())
+			err := processor.processCSV(filePath)
+			if err != nil {
+				fmt.Printf("Erro ao processar o arquivo %s: %v\n", filePath, err)
+			}
+		}
+	}
+
+	for _, ch := range processor.queueMap {
+		ch.Close()
+	}
+}
+
+func readHeader(headerFile string) ([]string, error) {
+	file, err := os.Open(headerFile)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao abrir o arquivo: %w", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	header, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("erro ao ler o cabeçalho: %w", err)
+	}
+
+	return header, nil
+}
+
+func (p *CSVProcessor) processCSV(filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("erro ao abrir o arquivo: %w", err)
+	}
+	defer file.Close()
+
+	queueName := filepath.Base(filePath)
+	channel, err := p.getRabbitMQChannel(queueName)
+	if err != nil {
+		return fmt.Errorf("erro ao obter o canal RabbitMQ: %w", err)
+	}
+
+	reader := csv.NewReader(bufio.NewReader(file))
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("erro ao ler a linha: %w", err)
+		}
+
+		jsonRecord, err := p.csvRecordToJSON(record)
+		if err != nil {
+			return fmt.Errorf("erro ao converter a linha para JSON: %w", err)
+		}
+
+		err = p.publishToQueue(channel, queueName, jsonRecord)
+		if err != nil {
+			return fmt.Errorf("erro ao publicar a mensagem na fila: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (p *CSVProcessor) csvRecordToJSON(record []string) (string, error) {
+	if len(record) != len(p.header) {
+		return "", fmt.Errorf("número incorreto de campos na linha")
+	}
+
+	data := make(map[string]string)
+	for i, value := range record {
+		data[p.header[i]] = value
+	}
+
+	jsonRecord, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("erro ao converter o registro para JSON: %w", err)
+	}
+
+	return string(jsonRecord), nil
+}
+
+func (p *CSVProcessor) getRabbitMQChannel(queueName string) (*amqp.Channel, error) {
+	if channel, ok := p.queueMap[queueName]; ok {
+		return channel, nil
+	}
+
+	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+	if err != nil {
+		return nil, fmt.Errorf("erro ao conectar ao RabbitMQ: %w", err)
+	}
+
+	channel, err := conn.Channel()
+	if err != nil {
+		return nil, fmt.Errorf("erro ao criar o canal RabbitMQ: %w", err)
+	}
+
+	_, err = channel.QueueDeclare(
+		queueName,
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao declarar a fila: %w", err)
+	}
+
+	p.queueMap[queueName] = channel
+	return channel, nil
+}
+
+func (p *CSVProcessor) publishToQueue(channel *amqp.Channel, queueName, message string) error {
+	err := channel.Publish(
+		"",
+		queueName,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        []byte(message),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("erro ao publicar a mensagem: %w", err)
+	}
+
+	return nil
+}
